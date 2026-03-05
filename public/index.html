@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HNL Takeoffs & Landings</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      crossorigin=""
+    />
+    <style>
+      :root {
+        --bg-1: #0f172a;
+        --bg-2: #111827;
+        --panel: rgba(15, 23, 42, 0.8);
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --border: #1f2937;
+        --accent: #22d3ee;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Trebuchet MS", "Segoe UI", Arial, sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at top, var(--bg-1), var(--bg-2));
+        min-height: 100vh;
+      }
+
+      .app {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 2rem;
+      }
+
+      h2 {
+        margin: 0 0 12px;
+        font-size: 1.1rem;
+      }
+
+      .meta {
+        color: var(--muted);
+        margin-bottom: 16px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+
+      .action-btn {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: #0f172a;
+        color: var(--text);
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+
+      .action-btn:hover { border-color: var(--accent); }
+      .status { min-height: 28px; margin-bottom: 12px; color: var(--accent); }
+      .error { color: #fda4af; }
+      .muted { color: var(--muted); }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        backdrop-filter: blur(4px);
+      }
+
+      .upcoming {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(2, 1fr);
+        margin-bottom: 16px;
+      }
+
+      .upcoming-item {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .upcoming-time {
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .upcoming-empty {
+        color: var(--muted);
+      }
+
+      .map {
+        height: 360px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .layout {
+        display: grid;
+        gap: 16px;
+      }
+
+      .data-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .scroll {
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th, td {
+        font-size: 0.94rem;
+        text-align: left;
+        padding: 10px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        background: rgba(2, 6, 23, 0.9);
+      }
+
+      .empty {
+        color: var(--muted);
+      }
+
+      .alerts {
+        max-height: 110px;
+        overflow: auto;
+        padding-left: 18px;
+      }
+
+      .alerts li {
+        margin-bottom: 6px;
+        color: #fde68a;
+      }
+
+      @media (max-width: 1100px) {
+        .upcoming,
+        .data-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 800px) {
+        .app { padding: 16px; }
+        .map { height: 280px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <h1>HNL airport now</h1>
+      <div class="meta">Live departures and arrivals for HNL, with the next takeoff and landing on a map.</div>
+
+      <div class="actions">
+        <button id="notify-btn" class="action-btn" type="button">Enable notifications</button>
+        <span id="notify-status" class="muted"></span>
+      </div>
+
+      <div class="status" id="status">Loading flights...</div>
+
+      <section class="upcoming">
+        <article class="panel upcoming-item" id="soonest-takeoff-panel">
+          <h2>Soonest takeoff</h2>
+          <div id="soonest-takeoff" class="upcoming-empty">Waiting for flight data…</div>
+        </article>
+        <article class="panel upcoming-item" id="soonest-landing-panel">
+          <h2>Soonest landing</h2>
+          <div id="soonest-landing" class="upcoming-empty">Waiting for flight data…</div>
+        </article>
+      </section>
+
+      <section class="panel layout">
+        <h2>HNL movement map</h2>
+        <div class="map" id="soon-map"></div>
+      </section>
+
+      <section class="panel layout" style="margin-top: 16px;">
+        <h2>Nearby alerts</h2>
+        <ul id="alerts" class="alerts"></ul>
+      </section>
+
+      <div class="data-grid" style="margin-top: 16px;">
+        <section class="panel">
+          <h2>Takeoffs</h2>
+          <div id="takeoff-wrap" class="empty">No data loaded yet.</div>
+          <div class="scroll">
+            <table id="takeoff-table" hidden>
+              <thead>
+                <tr>
+                  <th>Flight</th>
+                  <th>Airline</th>
+                  <th>From</th>
+                  <th>Scheduled</th>
+                  <th>Terminal</th>
+                  <th>Gate</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="takeoff-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Landings</h2>
+          <div id="landing-wrap" class="empty">No data loaded yet.</div>
+          <div class="scroll">
+            <table id="landing-table" hidden>
+              <thead>
+                <tr>
+                  <th>Flight</th>
+                  <th>Airline</th>
+                  <th>To</th>
+                  <th>Scheduled</th>
+                  <th>Terminal</th>
+                  <th>Gate</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="landing-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script>
+      const statusEl = document.getElementById('status');
+      const takeoffWrap = document.getElementById('takeoff-wrap');
+      const landingWrap = document.getElementById('landing-wrap');
+      const takeoffTable = document.getElementById('takeoff-table');
+      const landingTable = document.getElementById('landing-table');
+      const takeoffBody = document.getElementById('takeoff-body');
+      const landingBody = document.getElementById('landing-body');
+      const notifyBtn = document.getElementById('notify-btn');
+      const notifyStatus = document.getElementById('notify-status');
+      const alertsList = document.getElementById('alerts');
+      const soonTakeoffPanel = document.getElementById('soonest-takeoff');
+      const soonLandingPanel = document.getElementById('soonest-landing');
+
+      const hnl = {
+        iata: 'HNL',
+        name: 'Honolulu International',
+        lat: 21.3187,
+        lon: -157.9225
+      };
+
+      const upcomingNotifyMs = 20 * 60 * 1000;
+      const notified = new Set();
+      const maxAlertsToKeep = 6;
+      let map;
+      let overlays;
+      let mapReady = false;
+
+      const hasCoordinates = (point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lon);
+      const shortLabel = (flight) => {
+        if (!flight) return 'Flight';
+        return `${flight.flight} • ${flight.airline || 'Unknown'}`;
+      };
+
+      const formatTime = (isoOrMs) => {
+        const d = new Date(isoOrMs);
+        return d.toLocaleString();
+      };
+
+      const minutesFromNow = (flight) => {
+        if (!Number.isFinite(flight?.scheduled_ts)) return null;
+        return Math.round((flight.scheduled_ts - Date.now()) / 60000);
+      };
+
+      const renderRows = (rows, body) => {
+        if (!rows.length) {
+          body.innerHTML = '';
+          return;
+        }
+        body.innerHTML = rows
+          .map((f) => {
+            const scheduled = formatTime(f.scheduled_at);
+            return `
+              <tr>
+                <td>${f.flight || ''}</td>
+                <td>${f.airline || ''}</td>
+                <td>${f.other_airport || ''}</td>
+                <td>${scheduled}</td>
+                <td>${f.terminal || ''}</td>
+                <td>${f.gate || ''}</td>
+                <td>${f.status || ''}</td>
+              </tr>`;
+          })
+          .join('');
+      };
+
+      const renderPanelRows = (direction, data) => {
+        const isTakeoff = direction === 'takeoff';
+        const rows = data
+          .filter((f) => f.direction === direction)
+          .sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at));
+
+        if (isTakeoff) {
+          takeoffWrap.hidden = rows.length > 0;
+          takeoffTable.hidden = rows.length === 0;
+          if (rows.length === 0) {
+            takeoffWrap.textContent = 'No takeoffs in latest response.';
+          }
+          renderRows(rows, takeoffBody);
+          return rows[0] || null;
+        }
+
+        landingWrap.hidden = rows.length > 0;
+        landingTable.hidden = rows.length === 0;
+        if (rows.length === 0) {
+          landingWrap.textContent = 'No landings in latest response.';
+        }
+        renderRows(rows, landingBody);
+        return rows[0] || null;
+      };
+
+      const getSoonest = (flights, direction) => {
+        const now = Date.now();
+        const future = flights
+          .filter((f) => f.direction === direction && Number.isFinite(f.scheduled_ts))
+          .filter((f) => f.scheduled_ts >= now - 3 * 60 * 60 * 1000)
+          .sort((a, b) => a.scheduled_ts - b.scheduled_ts);
+        return future[0] || null;
+      };
+
+      const pushAlert = (text) => {
+        const node = document.createElement('li');
+        node.textContent = `${new Date().toLocaleTimeString()} - ${text}`;
+        alertsList.prepend(node);
+        while (alertsList.children.length > maxAlertsToKeep) {
+          alertsList.removeChild(alertsList.lastChild);
+        }
+      };
+
+      const notifyAbout = (flight) => {
+        if (!('Notification' in window) || Notification.permission !== 'granted' || !flight) return;
+
+        const mins = minutesFromNow(flight);
+        if (mins === null || mins < 0 || mins > Math.round(upcomingNotifyMs / 60000)) return;
+
+        const point = flight.other_airport_name || flight.other_airport_iata || 'airport';
+        const finalMessage =
+          flight.direction === 'takeoff'
+            ? `${flight.flight} to ${point} is about to take off`
+            : `${flight.flight} from ${point} is about to land`;
+
+        const key = `${flight.flight}|${flight.direction}|${flight.scheduled_ts}`;
+        if (notified.has(key)) return;
+        notified.add(key);
+
+        try {
+          new Notification('HNL flights update', { body: finalMessage });
+        } catch {
+          // ignore notification failures
+        }
+        pushAlert(finalMessage);
+      };
+
+      const updateNotificationStatus = () => {
+        if (!('Notification' in window)) {
+          notifyStatus.textContent = 'Notifications unavailable in this browser.';
+          notifyBtn.disabled = true;
+          return;
+        }
+        if (Notification.permission === 'granted') {
+          notifyStatus.textContent = 'Notifications enabled.';
+          notifyBtn.textContent = 'Notifications on';
+          return;
+        }
+        if (Notification.permission === 'denied') {
+          notifyStatus.textContent = 'Notifications blocked by browser. Enable in site settings.';
+          return;
+        }
+        notifyStatus.textContent = 'Notifications disabled.';
+      };
+
+      const initMap = () => {
+        if (typeof L === 'undefined') {
+          return;
+        }
+
+        map = L.map('soon-map').setView([hnl.lat, hnl.lon], 8);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors',
+          maxZoom: 11,
+          minZoom: 4
+        }).addTo(map);
+
+        overlays = L.layerGroup().addTo(map);
+        mapReady = true;
+      };
+
+      const buildMarkerLabel = (flight, direction) => {
+        const label = direction === 'takeoff' ? 'Takeoff' : 'Landing';
+        const minutes = minutesFromNow(flight);
+        const minutesText =
+          minutes === null ? '' : ` (${minutes >= 0 ? 'in ' : ''}${minutes} min)`;
+        return `${label}: ${shortLabel(flight)}${minutesText}`;
+      };
+
+      const ensureRoutePoint = (point, fallback) => {
+        return {
+          lat: Number.isFinite(point?.lat) ? point.lat : fallback?.lat,
+          lon: Number.isFinite(point?.lon) ? point.lon : fallback?.lon,
+          iata: point?.iata || '',
+          name: point?.name || ''
+        };
+      };
+
+      const updateMap = (takeoffFlight, landingFlight) => {
+        if (!mapReady || !map || !overlays) return;
+
+        overlays.clearLayers();
+        const markers = [];
+        const addMarker = (point, text) => {
+          if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return;
+          L.circleMarker([point.lat, point.lon], {
+            radius: 7,
+            fillColor: '#22d3ee',
+            color: '#22d3ee',
+            weight: 1,
+            fillOpacity: 0.9
+          }).bindPopup(text).addTo(overlays);
+          markers.push([point.lat, point.lon]);
+        };
+
+        const lineColor = {
+          takeoff: '#38bdf8',
+          landing: '#f59e0b'
+        };
+
+        const addFlight = (flight, direction, color) => {
+          if (!flight) return;
+          const start = ensureRoutePoint(flight.origin, hnl);
+          const end = ensureRoutePoint(flight.destination, hnl);
+
+          if (hasCoordinates(start)) {
+            addMarker(start, `${buildMarkerLabel(flight, direction)}: ${start.name || start.iata}`);
+          }
+          if (hasCoordinates(end)) {
+            addMarker(end, `${buildMarkerLabel(flight, direction)}: ${end.name || end.iata}`);
+          }
+
+          if (hasCoordinates(start) && hasCoordinates(end)) {
+            L.polyline(
+              [
+                [start.lat, start.lon],
+                [end.lat, end.lon]
+              ],
+              { color, weight: 3, opacity: 0.8 }
+            ).addTo(overlays);
+          }
+        };
+
+        addFlight(takeoffFlight, 'takeoff', lineColor.takeoff);
+        addFlight(landingFlight, 'landing', lineColor.landing);
+
+        if (!markers.length) {
+          map.setView([hnl.lat, hnl.lon], 8);
+          return;
+        }
+
+        map.fitBounds(markers);
+      };
+
+      const renderSoonestSummary = (element, flight, direction) => {
+        if (!flight) {
+          element.textContent = `No ${direction} found in latest response.`;
+          element.className = 'upcoming-empty';
+          return;
+        }
+
+        const mins = minutesFromNow(flight);
+        const minsText = mins === null
+          ? 'time unknown'
+          : `${Math.abs(mins)} min ${mins < 0 ? 'ago' : 'from now'}`;
+        const other = flight.other_airport_name || flight.other_airport_iata || 'Unknown';
+
+        element.className = '';
+        if (direction === 'takeoff') {
+          element.innerHTML = `
+            <div><strong>${flight.flight}</strong> (${flight.airline || 'Airline unknown'})</div>
+            <div>${other} destination</div>
+            <div class="upcoming-time">Scheduled: ${formatTime(flight.scheduled_at)} · ${minsText}</div>
+          `;
+          return;
+        }
+
+        element.innerHTML = `
+          <div><strong>${flight.flight}</strong> (${flight.airline || 'Airline unknown'})</div>
+          <div>From ${other}</div>
+          <div class="upcoming-time">Scheduled: ${formatTime(flight.scheduled_at)} · ${minsText}</div>
+        `;
+      };
+
+      const loadFlights = async () => {
+        try {
+          const res = await fetch('/api/flights');
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.error || `Request failed (${res.status})`);
+          }
+
+          const payload = await res.json();
+          if (payload.error) {
+            throw new Error(payload.error);
+          }
+
+          const flights = Array.isArray(payload.flights) ? payload.flights : [];
+          renderPanelRows('takeoff', flights);
+          renderPanelRows('landing', flights);
+
+          const soonestTakeoff = getSoonest(flights, 'takeoff');
+          const soonestLanding = getSoonest(flights, 'landing');
+
+          renderSoonestSummary(soonTakeoffPanel, soonestTakeoff, 'takeoff');
+          renderSoonestSummary(soonLandingPanel, soonestLanding, 'landing');
+
+          notifyAbout(soonestTakeoff);
+          notifyAbout(soonestLanding);
+          updateMap(soonestTakeoff, soonestLanding);
+
+          statusEl.textContent = `Last updated ${new Date().toLocaleTimeString()}`;
+          statusEl.classList.remove('error');
+        } catch (err) {
+          statusEl.textContent = `Unable to load flights: ${err.message}`;
+          statusEl.classList.add('error');
+        }
+      };
+
+      notifyBtn.addEventListener('click', async () => {
+        if (!('Notification' in window)) return;
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+          notifyStatus.textContent = 'Notifications enabled.';
+          notifyBtn.textContent = 'Notifications on';
+        } else if (permission === 'denied') {
+          notifyStatus.textContent = 'Notifications blocked by browser. Enable in site settings.';
+        } else {
+          notifyStatus.textContent = 'Notifications not enabled.';
+        }
+      });
+
+      initMap();
+      updateNotificationStatus();
+      loadFlights();
+      setInterval(loadFlights, 60000);
+    </script>
+  </body>
+</html>
